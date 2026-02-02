@@ -65,8 +65,8 @@ class PointCloud(Node):
         
         pcd_down = pcd.voxel_down_sample(voxel_size = 0.001)
         
-        min_bound = [1.0, -0.37, -1.5]
-        max_bound = [1.75, 0.37, 1.5]
+        min_bound = [1.3, -0.37, -1.5]
+        max_bound = [1.75, 0.37, 0.3]
         
         bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
         pcd_cropped = pcd_down.crop(bbox)

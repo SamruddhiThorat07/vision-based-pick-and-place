@@ -57,17 +57,15 @@ class MoveArm(Node):
         self.tf_listener = TransformListener(self.tf_buffer,self)
         
         self.add_table_collision()
-        # self.control_gripper("open")
                 
         self.create_subscription(DetectedObjects,"/obj_pose",self.detected_obj_cb,10,callback_group=self.callback_group)
         self.create_subscription(JointState, "/joint_states",self.joint_state_cb,10,callback_group=self.callback_group)
         self.gripper_client = ActionClient(self,GripperCommand,"/robotiq_gripper_controller/gripper_cmd",callback_group=self.callback_group)
         
         self.bin_locations = {
-            "red": [-0.35, -0.5, 0.3], 
-            "green": [-0.12, -0.5, 0.3],
-            "blue": [ 0.12, -0.5, 0.3],
-            "unknown": [ 0.35, -0.5, 0.3]
+            "red": [0.5, 0.6, 0.3], 
+            "green": [0.5, 0.45, 0.3],
+            "blue": [0.5, 0.30, 0.3]
         }
         
         self.arm_home_pos = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
@@ -80,7 +78,6 @@ class MoveArm(Node):
         self.is_moving = False
         self.grasp_retry = 0 
         
-        # self.timer = self.create_timer(0.5,self.check_joint_states,callback_group=self.callback_group)
         
         self.timer = self.create_timer(0.5,self.arm_callback,callback_group=self.callback_group)
         
@@ -134,7 +131,7 @@ class MoveArm(Node):
             return False
         
         goal_future = self.gripper_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, goal_future, timeout_sec=2.0)
+        rclpy.spin_until_future_complete(self, goal_future, timeout_sec=1.0)
         
         goal_handle = goal_future.result()
         if not goal_handle.accepted:
@@ -143,7 +140,7 @@ class MoveArm(Node):
             return False
     
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future, timeout_sec=3.0)
+        rclpy.spin_until_future_complete(self, result_future, timeout_sec=2.0)
     
         self.get_logger().info(f"changed to {state} gripper")
         self.is_moving = False
@@ -267,7 +264,7 @@ class MoveArm(Node):
         elif self.current_state == State.GRASP:
             
             self.get_logger().info("grasp mode")
-            if self.go_to_pose(self.obj_point,z_offset=0.12,is_cartesian = True):
+            if self.go_to_pose(self.obj_point,z_offset=0.135,is_cartesian = True):
                 if self.control_gripper("close"):  
                     self.current_state = State.VERIFY_GRASP
                 elif self.grasp_retry>2:
@@ -309,7 +306,7 @@ class MoveArm(Node):
             bin_point = PointStamped()
             bin_point.point.x, bin_point.point.y, bin_point.point.z = self.bin_locations[self.current_obj.color]
             
-            if self.go_to_pose(bin_point,z_offset=0.0,is_cartesian = False):
+            if self.go_to_pose(bin_point,z_offset=0.0,is_cartesian = True):
                 
                 if self.gripper_pos>0.7:
                     self.get_logger().info("Object not present")
@@ -338,10 +335,7 @@ def main():
     rclpy.init()
     move_arm = MoveArm()
     
-    # executor = MultiThreadedExecutor(num_threads=5)
-    # executor.add_node(move_arm)
     rclpy.spin(move_arm)
-    
     rclpy.shutdown()
     
 if __name__ == "__main__":
