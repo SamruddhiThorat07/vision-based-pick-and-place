@@ -13,9 +13,16 @@ class PointCloud(Node):
     def __init__(self):
         super().__init__('point_cloud')
         
-        self.pcs = self.create_subscription(PointCloud2, '/camera/depth/points',self.pc_callback,10)
+        # queue of 1 so we always process the newest frame (with 10 it was working on frames 5-8 sec old)
+        self.pcs = self.create_subscription(PointCloud2, '/camera/depth/points',self.pc_callback,1)
         self.obj_details = self.create_publisher(DetectedObjects , '/obj_pose',10)
-        
+        self.table_empty = False
+        self.last_count = None
+
+        # table area in camera_link frame
+        self.min_bound = np.array([1.3, -0.37, -1.5])
+        self.max_bound = np.array([1.75, 0.37, 0.3])
+
     def get_color_name(self, cluster_colors):
         
         avg_rgb = np.mean(cluster_colors,axis=0)
@@ -33,20 +40,23 @@ class PointCloud(Node):
         
         field_names = ("x","y","z","rgb")
         
-        point_cloud_data = list(pc2.read_points(msg, field_names=field_names, skip_nans=True))
-        
-        if len(point_cloud_data) == 0:
-            return    
-        
-        points_data = np.array(point_cloud_data) # to numpy array 
-                  
+        # read_points already gives a numpy array, list() + np.array() was taking ~0.8 sec
+        points_data = np.asarray(pc2.read_points(msg, field_names=field_names, skip_nans=True))
+
+        if len(points_data) == 0:
+            return
+
         x = points_data['x']
         y = points_data['y']
         z = points_data['z']
-        
+
         points = np.stack([x , y , z ], axis=-1)
-        
-        rgb = points_data['rgb']
+
+        # crop to the table before making the open3d cloud so it only copies ~30% of the points
+        in_box = np.all((points >= self.min_bound) & (points <= self.max_bound), axis=1)
+        points = points[in_box]
+
+        rgb = points_data['rgb'][in_box]
         rgb_packed = rgb.view(np.uint32)
         
         r = (rgb_packed >> 16) & 0x0000ff
@@ -56,20 +66,16 @@ class PointCloud(Node):
         colors = np.stack([r,g,b], axis=-1).astype(np.float32)/255.0
         
         o3d_pcd = o3d.geometry.PointCloud()
-        o3d_pcd.points= o3d.utility.Vector3dVector(points)
-        o3d_pcd.colors= o3d.utility.Vector3dVector(colors)
+        # open3d copies float64 arrays much faster than float32
+        o3d_pcd.points= o3d.utility.Vector3dVector(points.astype(np.float64))
+        o3d_pcd.colors= o3d.utility.Vector3dVector(colors.astype(np.float64))
         
         self.process_point_cloud(o3d_pcd, msg.header)
         
     def process_point_cloud(self, pcd, header):
         
-        pcd_down = pcd.voxel_down_sample(voxel_size = 0.001)
-        
-        min_bound = [1.3, -0.37, -1.5]
-        max_bound = [1.75, 0.37, 0.3]
-        
-        bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
-        pcd_cropped = pcd_down.crop(bbox)
+        # cloud is already cropped to the table in pc_callback
+        pcd_cropped = pcd.voxel_down_sample(voxel_size = 0.001)
                 
         plane_model , inliers = pcd_cropped.segment_plane(distance_threshold=0.02,ransac_n = 3, num_iterations=1000)
         
@@ -77,8 +83,12 @@ class PointCloud(Node):
         object_cloud = pcd_cropped.select_by_index(inliers, invert=True)
         
         if len(object_cloud.points) == 0:
-            self.get_logger().info("No objects detected on the table")
-            
+            # print only once when the table becomes empty, not every frame
+            if not self.table_empty:
+                self.get_logger().info("No objects detected on the table")
+                self.table_empty = True
+            self.last_count = 0
+
             msg = DetectedObjects()
             msg.header = header
             self.obj_details.publish(msg)
@@ -96,14 +106,23 @@ class PointCloud(Node):
         num_objects = max_label + 1
         
         if max_label < 0:
-            self.get_logger().info("No valid objects detected on the table")
+            # same as above, print only once
+            if not self.table_empty:
+                self.get_logger().info("No valid objects detected on the table")
+                self.table_empty = True
+            self.last_count = 0
             # Publish empty message
             msg = DetectedObjects()
             msg.header = header
             self.obj_details.publish(msg)
             return
     
-        self.get_logger().info(f"{num_objects}")
+        self.table_empty = False
+
+        # print the count only when it changes, not every frame
+        if num_objects != self.last_count:
+            self.get_logger().info(f"{num_objects}")
+            self.last_count = num_objects
         
         msg = DetectedObjects()
         msg.header = header

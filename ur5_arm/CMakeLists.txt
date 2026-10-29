@@ -30,6 +30,7 @@ endif()
 INSTALL(
   PROGRAMS src/point_cloud.py
   PROGRAMS src/moveit_grasp.py
+  PROGRAMS src/randomize_objects.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

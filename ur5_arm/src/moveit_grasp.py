@@ -76,8 +76,9 @@ class MoveArm(Node):
         self.obj_point = None
         self.current_obj = None
         self.is_moving = False
-        self.grasp_retry = 0 
-        
+        self.grasp_retry = 0
+        self.empty_checks = 0
+
         
         self.timer = self.create_timer(0.5,self.arm_callback,callback_group=self.callback_group)
         
@@ -184,7 +185,7 @@ class MoveArm(Node):
             tolerance_position=0.001,
             tolerance_orientation=0.001
         )
-        
+
         self.ur5_arm.wait_until_executed()
         self.is_moving = False
         error = self.ur5_arm.get_last_execution_error_code()
@@ -222,7 +223,17 @@ class MoveArm(Node):
         
         if not self.check_joint_states():
             return
-        
+
+        # table empty for more than 3 sec (7 ticks of 0.5 sec) in idle -> done, print once and stop printing
+        if self.current_state == State.IDLE and len(self.detected_objects) == 0:
+            self.empty_checks += 1
+            if self.empty_checks == 7:
+                self.get_logger().info("Pick and place successful")
+            if self.empty_checks >= 7:
+                return
+        else:
+            self.empty_checks = 0
+
         self.get_logger().info(f"Current state: {self.current_state.name}")
         
         # idle
@@ -231,7 +242,7 @@ class MoveArm(Node):
                 self.get_logger().info("idle --> detected_obj")
                 self.current_state = State.DETECT_OBJECTS
             else:
-                self.get_logger().info("No object detected on the table pick and plcae successful")
+                self.get_logger().info("No object detected on the table")
                 
         # object detection
         elif self.current_state == State.DETECT_OBJECTS:
@@ -250,8 +261,8 @@ class MoveArm(Node):
                     return
             
             if self.go_to_pose(self.obj_point,z_offset=0.4,is_cartesian = True):
-     
-                if self.control_gripper("open"):              
+
+                if self.control_gripper("open"):
                     self.current_state = State.GRASP
                     self.get_logger().info(f"going to grasp mode")
                     return
@@ -265,7 +276,7 @@ class MoveArm(Node):
             
             self.get_logger().info("grasp mode")
             if self.go_to_pose(self.obj_point,z_offset=0.135,is_cartesian = True):
-                if self.control_gripper("close"):  
+                if self.control_gripper("close"):
                     self.current_state = State.VERIFY_GRASP
                 elif self.grasp_retry>2:
                     self.get_logger().info("trying again")
